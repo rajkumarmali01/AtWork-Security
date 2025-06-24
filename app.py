@@ -2,39 +2,41 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-st.title("🏢 Atwork Employee Daily Time Analysis (Two File Upload)")
+st.title("🏢 Atwork Employee Daily Time Detail Sheet")
 
 st.write("""
-Upload your **Atwork Seating** and **Punch In/Out** CSV files.
-- The app will match employees by ID, calculate first in/last out per day, and show total time.
+Upload your **Punch In/Out CSV** file.
+- The app will calculate first in/last out per employee per date, total time, and missing punches.
 - Download the result as CSV for Excel.
 """)
 
-seating_file = st.file_uploader("Upload Atwork Seating CSV", type="csv")
-punch_file = st.file_uploader("Upload Punch In/Out CSV", type="csv")
+uploaded_file = st.file_uploader("Upload Punch In/Out CSV", type="csv")
 
-def format_timedelta_to_hhmm(t):
-    if pd.isnull(t):
+def format_timedelta_to_hhmmss(td):
+    if pd.isnull(td):
         return ""
-    total_minutes = int(t.total_seconds() // 60)
-    hours = total_minutes // 60
-    minutes = total_minutes % 60
-    return f"{hours:02d}:{minutes:02d}"
+    total_seconds = int(td.total_seconds())
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    return f"{hours}:{minutes:02d}:{seconds:02d}"
 
 def process_punch_data(punch):
-    # Create EMPLOYEE ID and NAME columns if not present
-    if 'EMPLOYEE ID' not in punch.columns:
-        punch['EMPLOYEE ID'] = punch['Cardholder']
-    if 'NAME' not in punch.columns:
-        punch['NAME'] = punch['First name'].astype(str).str.strip() + " " + punch['Last name'].astype(str).str.strip()
+    # Ensure proper column names
+    punch.columns = [col.strip() for col in punch.columns]
+    # Create EMPLOYEE ID and Name columns if not present
+    if 'Employee ID' not in punch.columns:
+        punch['Employee ID'] = punch['Cardholder']
+    if 'Name' not in punch.columns:
+        punch['Name'] = punch['First name'].astype(str).str.strip() + " " + punch['Last name'].astype(str).str.strip()
     # Parse timestamps
     punch['Event timestamp'] = pd.to_datetime(punch['Event timestamp'], errors='coerce')
-    punch['DATE'] = punch['Event timestamp'].dt.date
-    punch['TIME'] = punch['Event timestamp'].dt.time
+    punch['Date'] = punch['Event timestamp'].dt.date
+    punch['Time'] = punch['Event timestamp'].dt.time
     # Only IN/OUT events
     punch = punch[punch['Event'].str.lower().isin(['in', 'out'])]
     # Group and get first in/last out
-    attendance = punch.groupby(['EMPLOYEE ID', 'NAME', 'DATE']).agg(
+    attendance = punch.groupby(['Employee ID', 'Name', 'Date']).agg(
         First_In=('Event timestamp', lambda x: x[punch.loc[x.index, 'Event'].str.lower() == 'in'].min()),
         Last_Out=('Event timestamp', lambda x: x[punch.loc[x.index, 'Event'].str.lower() == 'out'].max())
     ).reset_index()
@@ -52,34 +54,17 @@ def process_punch_data(punch):
     attendance['Missing Punch'] = attendance.apply(missing_punch, axis=1)
     return attendance
 
-if seating_file and punch_file:
+if uploaded_file:
     try:
-        # Read files
-        seating = pd.read_csv(seating_file)
-        punch = pd.read_csv(punch_file)
-
-        # Process punch data
+        punch = pd.read_csv(uploaded_file)
         attendance = process_punch_data(punch)
-
-        # Merge seating info (optional: you can display only punch data if you want)
-        merged = pd.merge(
-            attendance,
-            seating,
-            left_on='EMPLOYEE ID',
-            right_on='EMPLOYEE ID (Security)',  # Adjust if needed
-            how='left'
-        )
-
-        # Select columns for output (edit as needed)
-        output = merged[['EMPLOYEE ID', 'NAME', 'DATE', 'First_In', 'Last_Out', 'Total Time', 'Missing Punch']]
-        # Format time columns for Excel
-        output['First_In'] = output['First_In'].dt.strftime("%I:%M:%S %p")
-        output['Last_Out'] = output['Last_Out'].dt.strftime("%I:%M:%S %p")
-        output['Total Time'] = output['Total Time'].apply(format_timedelta_to_hhmm)
-
-        st.subheader("📝 Daily Attendance Detail")
+        # Format for Excel output
+        attendance['First In'] = attendance['First_In'].dt.strftime("%I:%M:%S %p")
+        attendance['Last Out'] = attendance['Last_Out'].dt.strftime("%I:%M:%S %p")
+        attendance['Total Time'] = attendance['Total Time'].apply(format_timedelta_to_hhmmss)
+        output = attendance[['Employee ID', 'Name', 'Date', 'First In', 'Last Out', 'Total Time', 'Missing Punch']]
+        st.subheader("📝 Detail Sheet")
         st.dataframe(output)
-
         csv = output.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="Download Detail Sheet as CSV",
@@ -87,12 +72,10 @@ if seating_file and punch_file:
             file_name=f"detail_sheet_{datetime.now().date()}.csv",
             mime="text/csv"
         )
-
     except Exception as e:
-        st.error(f"Error processing files: {e}")
-
+        st.error(f"Error processing file: {e}")
 else:
-    st.info("Please upload both CSV files to proceed.")
+    st.info("Please upload your Punch In/Out CSV file to proceed.")
 
 st.markdown("---")
 st.markdown("*Created by Rajkumar Mali Intern*")
