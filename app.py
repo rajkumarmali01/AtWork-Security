@@ -1,101 +1,97 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 
-def format_timedelta_to_hhmm(t):
-    if pd.isnull(t):
+st.title("🏢 Atwork Employee Attendance Analyzer")
+
+st.write("""
+Upload your **Atwork Seating** and **Punch in/out** CSV files to generate:
+- A summary of attendance for each seated employee
+- A list of visitors without seat allotment
+""")
+
+seating_file = st.file_uploader("Upload Atwork Seating CSV", type="csv")
+punch_file = st.file_uploader("Upload Punch In/Out CSV", type="csv")
+
+def format_hours(td):
+    if pd.isnull(td):
         return ""
-    total_minutes = int(t.total_seconds() // 60)
-    hours = total_minutes // 60
-    minutes = total_minutes % 60
+    hours = int(td)
+    minutes = int(round((td - hours) * 60))
     return f"{hours:02d}:{minutes:02d}"
 
-def process_data(df):
-    # Combine date and time into a single datetime column
-    df['datetime'] = pd.to_datetime(df['date'].astype(str) + ' ' + df['time'].astype(str), errors='coerce')
-    # Clean up 'reader in and out' column robustly
-    df['reader in and out'] = df['reader in and out'].apply(
-        lambda x: str(x).strip().lower() if pd.notnull(x) else ""
-    )
-    # Mark entries as 'in' or 'out'
-    def get_entry_type(x):
-        if isinstance(x, str):
-            if 'in' in x:
-                return 'in'
-            elif 'out' in x:
-                return 'out'
-        return None
-    df['entry_type'] = df['reader in and out'].apply(get_entry_type)
-    # Only keep rows with 'in' or 'out'
-    df = df[df['entry_type'].isin(['in', 'out'])]
-
-    # Group by employee id, name, date
-    grouped = df.groupby(['employee id', 'employee name', 'date'])
-
-    # Get earliest IN and latest OUT for each group
-    first_in = grouped.apply(lambda x: x[x['entry_type'] == 'in']['datetime'].min()).reset_index(name='First In')
-    last_out = grouped.apply(lambda x: x[x['entry_type'] == 'out']['datetime'].max()).reset_index(name='Last Out')
-
-    # Merge first_in and last_out on employee id, name, date
-    result = pd.merge(first_in, last_out, on=['employee id', 'employee name', 'date'], how='outer')
-
-    # Calculate total time
-    result['Total Time'] = result['Last Out'] - result['First In']
-
-    # Flag missing punches
-    def missing_punch(row):
-        if pd.isnull(row['First In']) and pd.isnull(row['Last Out']):
-            return "Both Missing"
-        elif pd.isnull(row['First In']):
-            return "Punch In Missing"
-        elif pd.isnull(row['Last Out']):
-            return "Punch Out Missing"
-        else:
-            return ""
-    result['Missing Punch'] = result.apply(missing_punch, axis=1)
-
-    # Reorder columns for clarity
-    result = result[['employee id', 'employee name', 'date', 'First In', 'Last Out', 'Total Time', 'Missing Punch']]
-    return result
-
-st.title("🏢 Atwork Employee Daily Time Analysis")
-
-uploaded_file = st.file_uploader("Choose a CSV file (punch data)", type="csv")
-
-if uploaded_file:
+if seating_file and punch_file:
     try:
-        raw_df = pd.read_csv(uploaded_file)
-        required_cols = {'employee id', 'employee name', 'date', 'time', 'reader in and out'}
-        if not required_cols.issubset(set(raw_df.columns)):
-            st.error(f"CSV must contain columns: {', '.join(required_cols)}")
-        else:
-            result_df = process_data(raw_df)
+        # --- Step 1: Read files ---
+        seating = pd.read_csv(seating_file)
+        punch = pd.read_csv(punch_file)
 
-            # Show table with formatted times
-            st.subheader("Daily Time Analysis (First In, Last Out, Total Time)")
-            st.dataframe(result_df.style.format({
-                'First In': lambda t: t.strftime("%I:%M:%S %p") if pd.notnull(t) else "",
-                'Last Out': lambda t: t.strftime("%I:%M:%S %p") if pd.notnull(t) else "",
-                'Total Time': format_timedelta_to_hhmm,
-                'Missing Punch': lambda x: x if x else ""
-            }))
+        # --- Step 2: Prepare Punch Data ---
+        punch['EMPLOYEE ID'] = punch['Cardholder']
+        punch['NAME'] = punch['First name'].astype(str).str.strip() + " " + punch['Last name'].astype(str).str.strip()
+        punch['Event timestamp'] = pd.to_datetime(punch['Event timestamp'], errors='coerce')
+        punch['DATE'] = punch['Event timestamp'].dt.date
+        punch['TIME'] = punch['Event timestamp'].dt.time
 
-            # Prepare for download
-            result_df_export = result_df.copy()
-            result_df_export['First In'] = result_df_export['First In'].dt.strftime("%I:%M:%S %p")
-            result_df_export['Last Out'] = result_df_export['Last Out'].dt.strftime("%I:%M:%S %p")
-            result_df_export['Total Time'] = result_df_export['Total Time'].apply(format_timedelta_to_hhmm)
-            csv = result_df_export.to_csv(index=False)
-            st.download_button(
-                label="📥 Download Detail Sheet as CSV",
-                data=csv,
-                file_name=f"detail_sheet_{datetime.now().date()}.csv"
-            )
+        # Only IN/OUT events
+        punch = punch[punch['Event'].str.lower().isin(['in', 'out'])]
+
+        # --- Step 3: Calculate First In, Last Out, Days Visited, Total Hours ---
+        # Use groupby.agg for robust 1D output
+        attendance = punch.groupby(['EMPLOYEE ID', 'NAME', 'DATE']).agg(
+            First_In=('Event timestamp', lambda x: x[punch.loc[x.index, 'Event'].str.lower() == 'in'].min()),
+            Last_Out=('Event timestamp', lambda x: x[punch.loc[x.index, 'Event'].str.lower() == 'out'].max())
+        ).reset_index()
+
+        attendance['Total Time'] = attendance['Last_Out'] - attendance['First_In']
+
+        # Days visited and total hours
+        summary = attendance.groupby(['EMPLOYEE ID', 'NAME']).agg(
+            Days_Visited=('DATE', 'nunique'),
+            Total_Hours=('Total Time', lambda x: x.sum().total_seconds() / 3600 if pd.notnull(x).any() else 0)
+        ).reset_index()
+
+        summary['Total_Hours'] = summary['Total_Hours'].apply(lambda x: format_hours(x))
+
+        # --- Step 4: Merge with Seating Data ---
+        final = pd.merge(
+            seating,
+            summary,
+            left_on='EMPLOYEE ID (Security)',
+            right_on='EMPLOYEE ID',
+            how='left'
+        )
+
+        final_output = final[['SR.NO', 'EMPLOYEE ID', 'EMPLOYEE NAME', 'EMPLOYEE ID (Security)', 'EMPLOYEE NAME (Security)', 'Days_Visited', 'Total_Hours']]
+
+        st.subheader("📝 Seated Employee Attendance Summary")
+        st.dataframe(final_output)
+
+        csv1 = final_output.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download Seated Employee Summary CSV",
+            data=csv1,
+            file_name="employee_attendance_summary.csv",
+            mime="text/csv"
+        )
+
+        # --- Step 5: Employees Visiting Without Seat Allotment ---
+        no_seat = summary[~summary['EMPLOYEE ID'].isin(seating['EMPLOYEE ID (Security)'])]
+        st.subheader("🚶‍♂️ Visitors Without Seat Allotment")
+        st.dataframe(no_seat)
+
+        csv2 = no_seat.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download Visitors Without Seat CSV",
+            data=csv2,
+            file_name="visitors_without_seat.csv",
+            mime="text/csv"
+        )
 
     except Exception as e:
-        st.error(f"Error processing file: {e}")
+        st.error(f"Error processing files: {e}")
+
 else:
-    st.info("Awaiting CSV file upload.")
+    st.info("Please upload both CSV files to proceed.")
 
 st.markdown("---")
-st.markdown("*Sample CSV columns:* employee id, employee name, date, time, reader in and out")
+st.markdown("*Created by Rajkumar Mali Intern*")
