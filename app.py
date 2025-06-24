@@ -1,89 +1,90 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 
-st.title("🏢 Atwork Employee Attendance Analyzer")
+st.title("🏢 Atwork Employee Daily Time Analysis (Two File Upload)")
 
 st.write("""
-Upload your **Atwork Seating** and **Punch in/out** CSV files to generate:
-- A summary of attendance for each seated employee
-- A list of visitors without seat allotment
+Upload your **Atwork Seating** and **Punch In/Out** CSV files.
+- The app will match employees by ID, calculate first in/last out per day, and show total time.
+- Download the result as CSV for Excel.
 """)
 
 seating_file = st.file_uploader("Upload Atwork Seating CSV", type="csv")
 punch_file = st.file_uploader("Upload Punch In/Out CSV", type="csv")
 
-def format_hours(td):
-    if pd.isnull(td):
+def format_timedelta_to_hhmm(t):
+    if pd.isnull(t):
         return ""
-    hours = int(td)
-    minutes = int(round((td - hours) * 60))
+    total_minutes = int(t.total_seconds() // 60)
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
     return f"{hours:02d}:{minutes:02d}"
+
+def process_punch_data(punch):
+    # Create EMPLOYEE ID and NAME columns if not present
+    if 'EMPLOYEE ID' not in punch.columns:
+        punch['EMPLOYEE ID'] = punch['Cardholder']
+    if 'NAME' not in punch.columns:
+        punch['NAME'] = punch['First name'].astype(str).str.strip() + " " + punch['Last name'].astype(str).str.strip()
+    # Parse timestamps
+    punch['Event timestamp'] = pd.to_datetime(punch['Event timestamp'], errors='coerce')
+    punch['DATE'] = punch['Event timestamp'].dt.date
+    punch['TIME'] = punch['Event timestamp'].dt.time
+    # Only IN/OUT events
+    punch = punch[punch['Event'].str.lower().isin(['in', 'out'])]
+    # Group and get first in/last out
+    attendance = punch.groupby(['EMPLOYEE ID', 'NAME', 'DATE']).agg(
+        First_In=('Event timestamp', lambda x: x[punch.loc[x.index, 'Event'].str.lower() == 'in'].min()),
+        Last_Out=('Event timestamp', lambda x: x[punch.loc[x.index, 'Event'].str.lower() == 'out'].max())
+    ).reset_index()
+    attendance['Total Time'] = attendance['Last_Out'] - attendance['First_In']
+    # Flag missing punches
+    def missing_punch(row):
+        if pd.isnull(row['First_In']) and pd.isnull(row['Last_Out']):
+            return "Both Missing"
+        elif pd.isnull(row['First_In']):
+            return "Punch In Missing"
+        elif pd.isnull(row['Last_Out']):
+            return "Punch Out Missing"
+        else:
+            return ""
+    attendance['Missing Punch'] = attendance.apply(missing_punch, axis=1)
+    return attendance
 
 if seating_file and punch_file:
     try:
-        # --- Step 1: Read files ---
+        # Read files
         seating = pd.read_csv(seating_file)
         punch = pd.read_csv(punch_file)
 
-        # --- Step 2: Prepare Punch Data ---
-        punch['EMPLOYEE ID'] = punch['Cardholder']
-        punch['NAME'] = punch['First name'].astype(str).str.strip() + " " + punch['Last name'].astype(str).str.strip()
-        punch['Event timestamp'] = pd.to_datetime(punch['Event timestamp'], errors='coerce')
-        punch['DATE'] = punch['Event timestamp'].dt.date
-        punch['TIME'] = punch['Event timestamp'].dt.time
+        # Process punch data
+        attendance = process_punch_data(punch)
 
-        # Only IN/OUT events
-        punch = punch[punch['Event'].str.lower().isin(['in', 'out'])]
-
-        # --- Step 3: Calculate First In, Last Out, Days Visited, Total Hours ---
-        # Use groupby.agg for robust 1D output
-        attendance = punch.groupby(['EMPLOYEE ID', 'NAME', 'DATE']).agg(
-            First_In=('Event timestamp', lambda x: x[punch.loc[x.index, 'Event'].str.lower() == 'in'].min()),
-            Last_Out=('Event timestamp', lambda x: x[punch.loc[x.index, 'Event'].str.lower() == 'out'].max())
-        ).reset_index()
-
-        attendance['Total Time'] = attendance['Last_Out'] - attendance['First_In']
-
-        # Days visited and total hours
-        summary = attendance.groupby(['EMPLOYEE ID', 'NAME']).agg(
-            Days_Visited=('DATE', 'nunique'),
-            Total_Hours=('Total Time', lambda x: x.sum().total_seconds() / 3600 if pd.notnull(x).any() else 0)
-        ).reset_index()
-
-        summary['Total_Hours'] = summary['Total_Hours'].apply(lambda x: format_hours(x))
-
-        # --- Step 4: Merge with Seating Data ---
-        final = pd.merge(
+        # Merge seating info (optional: you can display only punch data if you want)
+        merged = pd.merge(
+            attendance,
             seating,
-            summary,
-            left_on='EMPLOYEE ID (Security)',
-            right_on='EMPLOYEE ID',
+            left_on='EMPLOYEE ID',
+            right_on='EMPLOYEE ID (Security)',  # Adjust if needed
             how='left'
         )
 
-        final_output = final[['SR.NO', 'EMPLOYEE ID', 'EMPLOYEE NAME', 'EMPLOYEE ID (Security)', 'EMPLOYEE NAME (Security)', 'Days_Visited', 'Total_Hours']]
+        # Select columns for output (edit as needed)
+        output = merged[['EMPLOYEE ID', 'NAME', 'DATE', 'First_In', 'Last_Out', 'Total Time', 'Missing Punch']]
+        # Format time columns for Excel
+        output['First_In'] = output['First_In'].dt.strftime("%I:%M:%S %p")
+        output['Last_Out'] = output['Last_Out'].dt.strftime("%I:%M:%S %p")
+        output['Total Time'] = output['Total Time'].apply(format_timedelta_to_hhmm)
 
-        st.subheader("📝 Seated Employee Attendance Summary")
-        st.dataframe(final_output)
+        st.subheader("📝 Daily Attendance Detail")
+        st.dataframe(output)
 
-        csv1 = final_output.to_csv(index=False).encode('utf-8')
+        csv = output.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="Download Seated Employee Summary CSV",
-            data=csv1,
-            file_name="employee_attendance_summary.csv",
-            mime="text/csv"
-        )
-
-        # --- Step 5: Employees Visiting Without Seat Allotment ---
-        no_seat = summary[~summary['EMPLOYEE ID'].isin(seating['EMPLOYEE ID (Security)'])]
-        st.subheader("🚶‍♂️ Visitors Without Seat Allotment")
-        st.dataframe(no_seat)
-
-        csv2 = no_seat.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download Visitors Without Seat CSV",
-            data=csv2,
-            file_name="visitors_without_seat.csv",
+            label="Download Detail Sheet as CSV",
+            data=csv,
+            file_name=f"detail_sheet_{datetime.now().date()}.csv",
             mime="text/csv"
         )
 
