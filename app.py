@@ -7,17 +7,18 @@ st.write("""
 Upload your **Atwork Seating** and **Punch in/out** CSV files to generate:
 - A summary of attendance for each seated employee
 - A list of visitors without seat allotment
+- A daily detail sheet
 """)
 
 seating_file = st.file_uploader("Upload Atwork Seating CSV", type="csv", key="seating")
 punch_file = st.file_uploader("Upload Punch In/Out CSV", type="csv", key="punch")
 
-def format_hours(td):
-    if pd.isnull(td):
-        return ""
-    hours = int(td)
-    minutes = int(round((td - hours) * 60))
-    return f"{hours:02d}:{minutes:02d}"
+def format_hours(hours):
+    if pd.isnull(hours) or hours == 0:
+        return "00:00"
+    h = int(hours)
+    m = int(round((hours - h) * 60))
+    return f"{h:02d}:{m:02d}"
 
 def format_timedelta_to_hhmmss(td):
     if pd.isnull(td):
@@ -30,50 +31,45 @@ def format_timedelta_to_hhmmss(td):
 
 if seating_file and punch_file:
     try:
-        # --- Step 1: Read files ---
+        # Read and clean files
         seating = pd.read_csv(seating_file, dtype=str)
         punch = pd.read_csv(punch_file, dtype=str)
-
-        # --- Step 2: Clean and standardize column names ---
         seating.columns = [col.strip().upper() for col in seating.columns]
         punch.columns = [col.strip().upper() for col in punch.columns]
 
-        # --- Step 3: Identify columns ---
-        # Seating file columns
+        # Identify columns
         seat_id_col = next((col for col in seating.columns if 'EMPLOYEE ID' in col and 'SECURITY' in col), None)
         seat_name_col = next((col for col in seating.columns if 'EMPLOYEE NAME' in col and 'SECURITY' in col), None)
         sr_no_col = next((col for col in seating.columns if 'SR' in col), None)
-
-        # Punch file columns
         emp_id_col = next((col for col in punch.columns if col in ['EMPLOYEE ID', 'CARDHOLDER']), None)
         first_name_col = next((col for col in punch.columns if 'FIRST NAME' in col), None)
         last_name_col = next((col for col in punch.columns if 'LAST NAME' in col), None)
         event_col = next((col for col in punch.columns if 'EVENT' == col or 'EVENT' in col), None)
         timestamp_col = next((col for col in punch.columns if 'EVENT TIMESTAMP' in col), None)
 
-        # --- Step 4: Clean Employee IDs for robust merging ---
+        # Clean Employee IDs
         seating['EMPLOYEE_ID_CLEAN'] = seating[seat_id_col].astype(str).str.strip()
         punch['EMPLOYEE_ID_CLEAN'] = punch[emp_id_col].astype(str).str.strip()
 
-        # --- Step 5: Create full name in punch file ---
+        # Name in punch
         if first_name_col and last_name_col:
             punch['NAME'] = punch[first_name_col].astype(str).str.strip() + " " + punch[last_name_col].astype(str).str.strip()
         else:
             punch['NAME'] = punch['EMPLOYEE_ID_CLEAN']
 
-        # --- Step 6: Parse timestamps and filter IN/OUT events ---
+        # Parse timestamps and filter IN/OUT
         punch[timestamp_col] = pd.to_datetime(punch[timestamp_col], errors='coerce')
         punch['DATE'] = punch[timestamp_col].dt.date
         punch = punch[punch[event_col].str.lower().isin(['in', 'out'])]
 
-        # --- Step 7: Attendance calculation ---
+        # Attendance calculation
         attendance = punch.groupby(['EMPLOYEE_ID_CLEAN', 'DATE']).agg(
             First_In=(timestamp_col, lambda x: x[punch.loc[x.index, event_col].str.lower() == 'in'].min()),
             Last_Out=(timestamp_col, lambda x: x[punch.loc[x.index, event_col].str.lower() == 'out'].max())
         ).reset_index()
         attendance['Total Time'] = attendance['Last_Out'] - attendance['First_In']
 
-        # --- Step 8: Flag missing punches ---
+        # Flag missing punches
         def missing_punch(row):
             if pd.isnull(row['First_In']) and pd.isnull(row['Last_Out']):
                 return "Both Missing"
@@ -85,7 +81,7 @@ if seating_file and punch_file:
                 return ""
         attendance['Missing Punch'] = attendance.apply(missing_punch, axis=1)
 
-        # --- Step 9: Days visited and total hours ---
+        # Days visited and total hours
         attendance['Total Time (hours)'] = attendance['Total Time'].dt.total_seconds() / 3600
         summary = attendance.groupby('EMPLOYEE_ID_CLEAN').agg(
             Days_Visited=('DATE', 'nunique'),
@@ -101,7 +97,6 @@ if seating_file and punch_file:
             how='left'
         )
 
-        # Format for output
         final['Total_Hours'] = final['Total_Hours'].apply(lambda x: format_hours(x) if pd.notnull(x) else "")
         final['Days_Visited'] = final['Days_Visited'].fillna(0).astype(int)
 
@@ -120,7 +115,7 @@ if seating_file and punch_file:
             mime="text/csv"
         )
 
-        # --- Step 10: Visitors without seat allotment ---
+        # Visitors without seat
         no_seat = summary[~summary['EMPLOYEE_ID_CLEAN'].isin(seating['EMPLOYEE_ID_CLEAN'])]
         st.subheader("🚶‍♂️ Visitors Without Seat Allotment")
         st.dataframe(no_seat)
@@ -133,7 +128,7 @@ if seating_file and punch_file:
             mime="text/csv"
         )
 
-        # --- Step 11: Detailed daily sheet (like your screenshot) ---
+        # Detail sheet
         attendance['First In'] = attendance['First_In'].dt.strftime("%I:%M:%S %p")
         attendance['Last Out'] = attendance['Last_Out'].dt.strftime("%I:%M:%S %p")
         attendance['Total Time'] = attendance['Total Time'].apply(format_timedelta_to_hhmmss)
