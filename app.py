@@ -67,7 +67,7 @@ if seating_file and punch_file:
         punch = punch[punch[event_col].str.lower().isin(['in', 'out'])]
 
         # --- Step 7: Attendance calculation ---
-        attendance = punch.groupby(['EMPLOYEE_ID_CLEAN', 'NAME', 'DATE']).agg(
+        attendance = punch.groupby(['EMPLOYEE_ID_CLEAN', 'DATE']).agg(
             First_In=(timestamp_col, lambda x: x[punch.loc[x.index, event_col].str.lower() == 'in'].min()),
             Last_Out=(timestamp_col, lambda x: x[punch.loc[x.index, event_col].str.lower() == 'out'].max())
         ).reset_index()
@@ -85,44 +85,14 @@ if seating_file and punch_file:
                 return ""
         attendance['Missing Punch'] = attendance.apply(missing_punch, axis=1)
 
-       # --- Step 9: Days visited and total hours ---
-# Calculate days visited and total hours from attendance
-attendance['Total Time (hours)'] = attendance['Total Time'].dt.total_seconds() / 3600
+        # --- Step 9: Days visited and total hours ---
+        attendance['Total Time (hours)'] = attendance['Total Time'].dt.total_seconds() / 3600
+        summary = attendance.groupby('EMPLOYEE_ID_CLEAN').agg(
+            Days_Visited=('DATE', 'nunique'),
+            Total_Hours=('Total Time (hours)', 'sum')
+        ).reset_index()
 
-summary = attendance.groupby('EMPLOYEE_ID_CLEAN').agg(
-    Days_Visited=('DATE', 'nunique'),
-    Total_Hours=('Total Time (hours)', 'sum')
-).reset_index()
-
-# Merge with seating to get names from seating sheet
-final = pd.merge(
-    seating,
-    summary,
-    left_on='EMPLOYEE_ID_CLEAN',
-    right_on='EMPLOYEE_ID_CLEAN',
-    how='left'
-)
-
-# Format for output
-final['Total_Hours'] = final['Total_Hours'].apply(lambda x: format_hours(x) if pd.notnull(x) else "")
-final['Days_Visited'] = final['Days_Visited'].fillna(0).astype(int)
-
-# Use name from seating sheet
-output_cols = [col for col in [sr_no_col, seat_id_col, seat_name_col, 'Days_Visited', 'Total_Hours'] if col in final.columns]
-final_output = final[output_cols]
-
-st.subheader("📝 Seated Employee Attendance Summary")
-st.dataframe(final_output)
-
-csv1 = final_output.to_csv(index=False).encode('utf-8')
-st.download_button(
-    label="Download Seated Employee Summary CSV",
-    data=csv1,
-    file_name="employee_attendance_summary.csv",
-    mime="text/csv"
-)
-        
-     # --- Step 10: Merge with seating data ---
+        # Merge with seating to get names from seating sheet
         final = pd.merge(
             seating,
             summary,
@@ -131,8 +101,13 @@ st.download_button(
             how='left'
         )
 
-        # --- Step 11: Prepare outputs ---
-        final_output = final[[col for col in [sr_no_col, seat_id_col, seat_name_col, 'EMPLOYEE_ID_CLEAN', 'NAME', 'Days_Visited', 'Total_Hours'] if col in final.columns or col in ['EMPLOYEE_ID_CLEAN', 'NAME', 'Days_Visited', 'Total_Hours']]]
+        # Format for output
+        final['Total_Hours'] = final['Total_Hours'].apply(lambda x: format_hours(x) if pd.notnull(x) else "")
+        final['Days_Visited'] = final['Days_Visited'].fillna(0).astype(int)
+
+        # Use name from seating sheet
+        output_cols = [col for col in [sr_no_col, seat_id_col, seat_name_col, 'Days_Visited', 'Total_Hours'] if col in final.columns]
+        final_output = final[output_cols]
 
         st.subheader("📝 Seated Employee Attendance Summary")
         st.dataframe(final_output)
@@ -145,7 +120,7 @@ st.download_button(
             mime="text/csv"
         )
 
-        # --- Step 12: Visitors without seat allotment ---
+        # --- Step 10: Visitors without seat allotment ---
         no_seat = summary[~summary['EMPLOYEE_ID_CLEAN'].isin(seating['EMPLOYEE_ID_CLEAN'])]
         st.subheader("🚶‍♂️ Visitors Without Seat Allotment")
         st.dataframe(no_seat)
@@ -158,11 +133,11 @@ st.download_button(
             mime="text/csv"
         )
 
-        # --- Step 13: Detailed daily sheet (like your screenshot) ---
+        # --- Step 11: Detailed daily sheet (like your screenshot) ---
         attendance['First In'] = attendance['First_In'].dt.strftime("%I:%M:%S %p")
         attendance['Last Out'] = attendance['Last_Out'].dt.strftime("%I:%M:%S %p")
         attendance['Total Time'] = attendance['Total Time'].apply(format_timedelta_to_hhmmss)
-        detail_output = attendance[['EMPLOYEE_ID_CLEAN', 'NAME', 'DATE', 'First In', 'Last Out', 'Total Time', 'Missing Punch']]
+        detail_output = attendance[['EMPLOYEE_ID_CLEAN', 'DATE', 'First In', 'Last Out', 'Total Time', 'Missing Punch']]
         st.subheader("📋 Detail Sheet (Per Employee Per Date)")
         st.dataframe(detail_output)
         csv3 = detail_output.to_csv(index=False).encode('utf-8')
