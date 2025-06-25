@@ -117,7 +117,7 @@ if seating_file and punch_file:
 
         # Visitors without seat
         no_seat = summary[~summary['EMPLOYEE_ID_CLEAN'].isin(seating['EMPLOYEE_ID_CLEAN'])]
-        st.subheader("🚶‍♂️ Visitors Without Seat Allotment")
+        st.subheader("🚶‍♂️ Visitors /Employeee Without Seat Allotment")
         st.dataframe(no_seat)
 
         csv2 = no_seat.to_csv(index=False).encode('utf-8')
