@@ -62,12 +62,24 @@ if seating_file and punch_file:
         punch['DATE'] = punch[timestamp_col].dt.date
         punch = punch[punch[event_col].str.lower().isin(['in', 'out'])]
 
-        # Attendance calculation
-        attendance = punch.groupby(['EMPLOYEE_ID_CLEAN', 'DATE']).agg(
-            First_In=(timestamp_col, lambda x: x[punch.loc[x.index, event_col].str.lower() == 'in'].min()),
-            Last_Out=(timestamp_col, lambda x: x[punch.loc[x.index, event_col].str.lower() == 'out'].max())
-        ).reset_index()
-        attendance['Total Time'] = attendance['Last_Out'] - attendance['First_In']
+        # Attendance calculation (FIXED)
+def get_first_in(x):
+    in_times = x.loc[x[event_col].str.lower() == 'in', timestamp_col]
+    return in_times.min() if not in_times.empty else pd.NaT
+
+def get_last_out(x):
+    out_times = x.loc[x[event_col].str.lower() == 'out', timestamp_col]
+    return out_times.max() if not out_times.empty else pd.NaT
+
+attendance = (
+    punch
+    .groupby(['EMPLOYEE_ID_CLEAN', 'DATE'])
+    .apply(lambda x: pd.Series({
+        'First_In': get_first_in(x),
+        'Last_Out': get_last_out(x)
+    }))
+    .reset_index()
+)
 
         # Flag missing punches
         def missing_punch(row):
