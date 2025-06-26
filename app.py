@@ -60,10 +60,10 @@ if seating_file and punch_file:
 
         # Parse time
         punch[timestamp_col] = pd.to_datetime(punch[timestamp_col], errors='coerce')
-        
-        # Remove DATE column if it exists
+
+        # Remove DATE column if it exists to avoid ValueError
         if 'DATE' in punch.columns:
-            punch.drop(columns=['DATE'], inplace=True)
+            punch = punch.drop(columns=['DATE'])
         punch['DATE'] = punch[timestamp_col].dt.date
 
         # Keep only IN/OUT
@@ -99,6 +99,7 @@ if seating_file and punch_file:
             Total_Hours=('Total Time (hours)', 'sum')
         ).reset_index()
 
+        # Merge with seating to get names from seating sheet
         final = pd.merge(seating, summary, on='EMPLOYEE_ID_CLEAN', how='left')
         final['Total_Hours'] = final['Total_Hours'].apply(lambda x: format_hours(x) if pd.notnull(x) else "")
         final['Days_Visited'] = final['Days_Visited'].fillna(0).astype(int)
@@ -108,14 +109,15 @@ if seating_file and punch_file:
 
         st.subheader("📝 Seated Employee Attendance Summary")
         st.dataframe(final_output)
-
         st.download_button("Download Summary CSV", final_output.to_csv(index=False).encode(), "employee_summary.csv", "text/csv")
 
+        # Visitors without seat
         no_seat = summary[~summary['EMPLOYEE_ID_CLEAN'].isin(seating['EMPLOYEE_ID_CLEAN'])]
         st.subheader("🚶‍♂️ Visitors Without Seat Allotment")
         st.dataframe(no_seat)
         st.download_button("Download Visitors CSV", no_seat.to_csv(index=False).encode(), "visitors.csv", "text/csv")
 
+        # Detail sheet
         attendance['First In'] = attendance['First_In'].dt.strftime("%I:%M:%S %p")
         attendance['Last Out'] = attendance['Last_Out'].dt.strftime("%I:%M:%S %p")
         attendance['Total Time'] = attendance['Total Time'].apply(format_timedelta_to_hhmmss)
