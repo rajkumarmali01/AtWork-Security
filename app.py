@@ -61,9 +61,11 @@ if seating_file and punch_file:
         # Parse time
         punch[timestamp_col] = pd.to_datetime(punch[timestamp_col], errors='coerce')
 
-        # Remove DATE column if it exists to avoid ValueError
+        # --- Robust fix: Remove DATE column and index if they exist ---
         if 'DATE' in punch.columns:
             punch = punch.drop(columns=['DATE'])
+        if punch.index.name == 'DATE':
+            punch.index.name = None
         punch['DATE'] = punch[timestamp_col].dt.date
 
         # Keep only IN/OUT
