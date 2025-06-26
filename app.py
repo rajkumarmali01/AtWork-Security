@@ -57,8 +57,11 @@ if seating_file and punch_file:
 
         punch[timestamp_col] = pd.to_datetime(punch[timestamp_col], errors='coerce')
 
-        # ✅ Insert DATAGURU instead of DATE
-        punch['DATAGURU'] = punch[timestamp_col].dt.date
+        # ✅ Use a unique safe column name: INOUT_DATE_TEMP
+        if 'INOUT_DATE_TEMP' in punch.columns:
+            del punch['INOUT_DATE_TEMP']
+
+        punch['INOUT_DATE_TEMP'] = punch[timestamp_col].dt.date
 
         punch = punch[punch[event_col].str.lower().isin(['in', 'out'])]
 
@@ -71,7 +74,7 @@ if seating_file and punch_file:
             return outs.max() if not outs.empty else pd.NaT
 
         attendance = (
-            punch.groupby(['EMPLOYEE_ID_CLEAN', 'DATAGURU'])
+            punch.groupby(['EMPLOYEE_ID_CLEAN', 'INOUT_DATE_TEMP'])
             .apply(lambda x: pd.Series({
                 'First_In': get_first_in(x),
                 'Last_Out': get_last_out(x)
@@ -95,7 +98,7 @@ if seating_file and punch_file:
         attendance['Total Time (hours)'] = attendance['Total Time'].dt.total_seconds() / 3600
 
         summary = attendance.groupby('EMPLOYEE_ID_CLEAN').agg(
-            Days_Visited=('DATAGURU', 'nunique'),
+            Days_Visited=('INOUT_DATE_TEMP', 'nunique'),
             Total_Hours=('Total Time (hours)', 'sum')
         ).reset_index()
 
@@ -136,7 +139,7 @@ if seating_file and punch_file:
         attendance['First In'] = attendance['First_In'].dt.strftime("%I:%M:%S %p")
         attendance['Last Out'] = attendance['Last_Out'].dt.strftime("%I:%M:%S %p")
         attendance['Total Time'] = attendance['Total Time'].apply(format_timedelta_to_hhmmss)
-        detail_output = attendance[['EMPLOYEE_ID_CLEAN', 'DATAGURU', 'First In', 'Last Out', 'Total Time', 'Missing Punch']]
+        detail_output = attendance[['EMPLOYEE_ID_CLEAN', 'INOUT_DATE_TEMP', 'First In', 'Last Out', 'Total Time', 'Missing Punch']]
 
         st.subheader("📋 Detail Sheet (Per Employee Per Date)")
         st.dataframe(detail_output)
