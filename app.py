@@ -34,11 +34,9 @@ if seating_file and punch_file:
         seating = pd.read_csv(seating_file, dtype=str)
         punch = pd.read_csv(punch_file, dtype=str)
 
-        # Clean column names
         seating.columns = [col.strip().upper() for col in seating.columns]
         punch.columns = [col.strip().upper() for col in punch.columns]
 
-        # Identify relevant columns
         seat_id_col = next((col for col in seating.columns if 'EMPLOYEE ID' in col and 'SECURITY' in col), None)
         seat_name_col = next((col for col in seating.columns if 'EMPLOYEE NAME' in col and 'SECURITY' in col), None)
         sr_no_col = next((col for col in seating.columns if 'SR' in col), None)
@@ -49,30 +47,21 @@ if seating_file and punch_file:
         event_col = next((col for col in punch.columns if 'EVENT' == col or 'EVENT' in col), None)
         timestamp_col = next((col for col in punch.columns if 'EVENT TIMESTAMP' in col), None)
 
-        # Clean IDs
         seating['EMPLOYEE_ID_CLEAN'] = seating[seat_id_col].astype(str).str.strip()
         punch['EMPLOYEE_ID_CLEAN'] = punch[emp_id_col].astype(str).str.strip()
 
-        # Create full name
         if first_name_col and last_name_col:
             punch['NAME'] = punch[first_name_col].astype(str).str.strip() + " " + punch[last_name_col].astype(str).str.strip()
         else:
             punch['NAME'] = punch['EMPLOYEE_ID_CLEAN']
 
-        # Parse timestamps
         punch[timestamp_col] = pd.to_datetime(punch[timestamp_col], errors='coerce')
 
-        # Fix: Rename existing DATE column (if it exists)
-        if 'DATE' in punch.columns:
-            punch.rename(columns={'DATE': 'EXISTING_DATE_COL'}, inplace=True)
+        # ✅ Insert DATAGURU instead of DATE
+        punch['DATAGURU'] = punch[timestamp_col].dt.date
 
-        # Now safely add DATE column
-        punch['DATE'] = punch[timestamp_col].dt.date
-
-        # Filter IN/OUT only
         punch = punch[punch[event_col].str.lower().isin(['in', 'out'])]
 
-        # Attendance Calculation
         def get_first_in(x):
             ins = x.loc[x[event_col].str.lower() == 'in', timestamp_col]
             return ins.min() if not ins.empty else pd.NaT
@@ -82,7 +71,7 @@ if seating_file and punch_file:
             return outs.max() if not outs.empty else pd.NaT
 
         attendance = (
-            punch.groupby(['EMPLOYEE_ID_CLEAN', 'DATE'])
+            punch.groupby(['EMPLOYEE_ID_CLEAN', 'DATAGURU'])
             .apply(lambda x: pd.Series({
                 'First_In': get_first_in(x),
                 'Last_Out': get_last_out(x)
@@ -92,7 +81,6 @@ if seating_file and punch_file:
 
         attendance['Total Time'] = attendance['Last_Out'] - attendance['First_In']
 
-        # Missing punch logic
         def missing_punch(row):
             if pd.isnull(row['First_In']) and pd.isnull(row['Last_Out']):
                 return "Both Missing"
@@ -107,7 +95,7 @@ if seating_file and punch_file:
         attendance['Total Time (hours)'] = attendance['Total Time'].dt.total_seconds() / 3600
 
         summary = attendance.groupby('EMPLOYEE_ID_CLEAN').agg(
-            Days_Visited=('DATE', 'nunique'),
+            Days_Visited=('DATAGURU', 'nunique'),
             Total_Hours=('Total Time (hours)', 'sum')
         ).reset_index()
 
@@ -134,7 +122,6 @@ if seating_file and punch_file:
             mime="text/csv"
         )
 
-        # Visitors
         no_seat = summary[~summary['EMPLOYEE_ID_CLEAN'].isin(seating['EMPLOYEE_ID_CLEAN'])]
         st.subheader("🚶‍♂️ Visitors / Employee Without Seat Allotment")
         st.dataframe(no_seat)
@@ -146,11 +133,10 @@ if seating_file and punch_file:
             mime="text/csv"
         )
 
-        # Detail Sheet
         attendance['First In'] = attendance['First_In'].dt.strftime("%I:%M:%S %p")
         attendance['Last Out'] = attendance['Last_Out'].dt.strftime("%I:%M:%S %p")
         attendance['Total Time'] = attendance['Total Time'].apply(format_timedelta_to_hhmmss)
-        detail_output = attendance[['EMPLOYEE_ID_CLEAN', 'DATE', 'First In', 'Last Out', 'Total Time', 'Missing Punch']]
+        detail_output = attendance[['EMPLOYEE_ID_CLEAN', 'DATAGURU', 'First In', 'Last Out', 'Total Time', 'Missing Punch']]
 
         st.subheader("📋 Detail Sheet (Per Employee Per Date)")
         st.dataframe(detail_output)
