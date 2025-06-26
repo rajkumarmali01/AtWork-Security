@@ -34,31 +34,30 @@ if seating_file and punch_file:
         seating = pd.read_csv(seating_file, dtype=str)
         punch = pd.read_csv(punch_file, dtype=str)
 
-        # Clean and uppercase columns
+        # Normalize column names
         seating.columns = [col.strip().upper() for col in seating.columns]
         punch.columns = [col.strip().upper() for col in punch.columns]
 
-        # Identify columns
-        seat_id_col = 'EMPLOYEE ID(SECURITY)'
-        seat_name_col = 'EMPLOYEE NAME(SECURITY)'
-        sr_no_col = 'SR.NO'
+        # 🔍 Auto-detect columns
+        seat_id_col = next((col for col in seating.columns if 'EMPLOYEE ID' in col and 'SECURITY' in col), None)
+        seat_name_col = next((col for col in seating.columns if 'EMPLOYEE NAME' in col and 'SECURITY' in col), None)
+        sr_no_col = next((col for col in seating.columns if 'SR' in col), None)
 
-        emp_id_col = 'CARDHOLDER'
-        first_name_col = 'FIRST NAME'
-        last_name_col = 'LAST NAME'
-        event_col = 'EVENT'
-        timestamp_col = 'EVENT TIMESTAMP'
+        emp_id_col = next((col for col in punch.columns if col in ['EMPLOYEE ID', 'CARDHOLDER']), None)
+        first_name_col = next((col for col in punch.columns if 'FIRST NAME' in col), None)
+        last_name_col = next((col for col in punch.columns if 'LAST NAME' in col), None)
+        event_col = next((col for col in punch.columns if 'EVENT' == col or 'EVENT' in col), None)
+        timestamp_col = next((col for col in punch.columns if 'EVENT TIMESTAMP' in col), None)
 
-        # Clean IDs
         seating['EMPLOYEE_ID_CLEAN'] = seating[seat_id_col].astype(str).str.strip()
         punch['EMPLOYEE_ID_CLEAN'] = punch[emp_id_col].astype(str).str.strip()
 
-        # Full Name
+        # Combine names
         punch['NAME'] = punch[first_name_col].astype(str).str.strip() + " " + punch[last_name_col].astype(str).str.strip()
 
         punch[timestamp_col] = pd.to_datetime(punch[timestamp_col], errors='coerce')
 
-        # ✅ Safely add unique column
+        # ✅ Safe unique column name for date
         temp_date_col = 'INOUT_TEMP_DATE_V1_FINAL'
         if temp_date_col in punch.columns:
             punch.drop(columns=[temp_date_col], inplace=True)
